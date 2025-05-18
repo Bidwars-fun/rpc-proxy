@@ -24,7 +24,10 @@ export default {
 				corsHeaders['Access-Control-Allow-Origin'] = origin
 			}
 		} else {
-			corsHeaders['Access-Control-Allow-Origin'] = '*'
+			  return new Response("Forbidden", {
+			    status: 403,
+			    headers: corsHeaders
+			  });
 		}
 
 		if (request.method === "OPTIONS") {
