@@ -1,82 +1,85 @@
 interface Env {
-  CORS_ALLOW_ORIGIN: string; // comma-separated list, e.g. "https://testnet.bidquit.fun,https://bidquit.fun"
   HELIUS_API_KEY: string;
 }
 
-function buildCorsHeaders(request: Request, env: Env): Record<string, string> {
-  const corsHeaders: Record<string, string> = {
+// Allow ANY subdomain of bidquit.fun + the apex bidquit.fun
+function isAllowedOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    const host = url.hostname;
+
+    // only allow https origins
+    if (url.protocol !== "https:") return false;
+
+    // explicit allow (even though it's covered by wildcard)
+    if (origin === "https://testnet.bidquit.fun") return true;
+
+    // allow bidquit.fun and *.bidquit.fun
+    if (host === "bidquit.fun") return true;
+    if (host.endsWith(".bidquit.fun")) return true;
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function makeCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("Origin") || "";
+  const headers: Record<string, string> = {
     "Access-Control-Allow-Methods": "GET,HEAD,POST,PUT,OPTIONS",
-    // IMPORTANT: echo requested headers instead of "*"
     "Access-Control-Allow-Headers":
       request.headers.get("Access-Control-Request-Headers") || "",
     "Access-Control-Max-Age": "86400",
     "Vary": "Origin",
   };
 
-  const origin = request.headers.get("Origin");
-  const allowList = (env.CORS_ALLOW_ORIGIN || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  // If you want to hard-block unknown origins, keep this strict behavior.
-  // If you want to allow non-browser / no-Origin calls, you can handle `!origin` separately.
-  if (!origin || allowList.length === 0) return corsHeaders;
-
-  // Exact match
-  if (allowList.includes(origin)) {
-    corsHeaders["Access-Control-Allow-Origin"] = origin;
-
-    // Only set this if you actually use cookies/Authorization and need credentials.
-    // If you DON'T need credentials, leave it off.
-    // corsHeaders["Access-Control-Allow-Credentials"] = "true";
+  if (origin && isAllowedOrigin(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
   }
 
-  return corsHeaders;
+  return headers;
 }
 
 export default {
   async fetch(request: Request, env: Env) {
-    const corsHeaders = buildCorsHeaders(request, env);
-
-    // If this is a browser CORS request and the origin isn't allowed, block early.
-    // (If there's no Origin header, it's not a browser CORS request.)
-    const origin = request.headers.get("Origin");
-    if (origin && !("Access-Control-Allow-Origin" in corsHeaders)) {
-      return new Response("Forbidden (CORS)", {
-        status: 403,
-        headers: corsHeaders,
-      });
-    }
+    const origin = request.headers.get("Origin") || "";
+    const corsHeaders = makeCorsHeaders(request);
 
     // Preflight
     if (request.method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders,
-      });
+      // Return 204 for allowed origins, 403 otherwise (still with Vary etc.)
+      if (origin && !isAllowedOrigin(origin)) {
+        return new Response("Forbidden (CORS)", { status: 403, headers: corsHeaders });
+      }
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    // WebSocket upgrade passthrough
+    // Block actual browser requests from disallowed origins
+    if (origin && !isAllowedOrigin(origin)) {
+      return new Response("Forbidden (CORS)", { status: 403, headers: corsHeaders });
+    }
+
+    // WebSocket passthrough
     const upgrade = request.headers.get("Upgrade");
     if (upgrade && upgrade.toLowerCase() === "websocket") {
-      // Keep headers exactly; don't replace them
-      return fetch(`https://devnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`, request);
+      return fetch(
+        `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`,
+        request
+      );
     }
 
     const { pathname, search } = new URL(request.url);
 
-    // Preserve body + method (GET/HEAD should not send a body)
     const method = request.method.toUpperCase();
     const body =
       method === "GET" || method === "HEAD" ? undefined : await request.text();
 
-    const targetHost = pathname === "/" ? "devnet.helius-rpc.com" : "api.helius.xyz";
+    const targetHost = pathname === "/" ? "mainnet.helius-rpc.com" : "api.helius.xyz";
     const targetUrl =
       `https://${targetHost}${pathname}?api-key=${env.HELIUS_API_KEY}` +
       (search ? `&${search.slice(1)}` : "");
 
-    // Forward content-type if present, but don’t forward Origin
     const contentType = request.headers.get("Content-Type") || "application/json";
 
     const proxyRequest = new Request(targetUrl, {
@@ -90,7 +93,6 @@ export default {
 
     const res = await fetch(proxyRequest);
 
-    // Return response with cors headers (and keep status)
     return new Response(res.body, {
       status: res.status,
       headers: corsHeaders,
