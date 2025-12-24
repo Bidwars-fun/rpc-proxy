@@ -64,7 +64,7 @@ export default {
     const upgrade = request.headers.get("Upgrade");
     if (upgrade && upgrade.toLowerCase() === "websocket") {
       return fetch(
-        `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`,
+        `https://devnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`,
         request
       );
     }
@@ -75,7 +75,7 @@ export default {
     const body =
       method === "GET" || method === "HEAD" ? undefined : await request.text();
 
-    const targetHost = pathname === "/" ? "mainnet.helius-rpc.com" : "api.helius.xyz";
+    const targetHost = pathname === "/" ? "devnet.helius-rpc.com" : "api.helius.xyz";
     const targetUrl =
       `https://${targetHost}${pathname}?api-key=${env.HELIUS_API_KEY}` +
       (search ? `&${search.slice(1)}` : "");
